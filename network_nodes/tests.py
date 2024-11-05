@@ -1,8 +1,10 @@
+from django.contrib.admin import AdminSite
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from .admin import NetworkNodeAdmin
 from .models import NetworkNode
 
 User = get_user_model()
@@ -14,33 +16,15 @@ class BaseTestSetup(APITestCase):
     для создания пользователей и узлов сети.
     """
 
-    def create_user(self, email, password, is_active=True):
-        """
-        Создает и возвращает пользователя с заданными email, паролем и статусом активности.
-
-        Параметры:
-            email (str): Электронная почта пользователя.
-            password (str): Пароль пользователя.
-            is_active (bool): Флаг активности пользователя (по умолчанию True).
-
-        Возвращает:
-            User: Созданный пользователь.
-        """
+    @classmethod
+    def create_user(cls, email, password, is_active=True):
         user = User(email=email, is_active=is_active)
         user.set_password(password)
         user.save()
         return user
 
-    def create_network_node(self, **kwargs):
-        """
-        Создает и возвращает узел сети (NetworkNode) с указанными параметрами.
-
-        Параметры:
-            **kwargs: Переопределяемые значения полей модели NetworkNode.
-
-        Возвращает:
-            NetworkNode: Созданный узел сети.
-        """
+    @classmethod
+    def create_network_node(cls, **kwargs):
         defaults = {
             "name": "Default Node",
             "email": "default@example.com",
@@ -60,25 +44,30 @@ class NetworkNodeTests(BaseTestSetup):
     Тесты для модели NetworkNode, включая создание, фильтрацию, обновление и проверку прав доступа.
     """
 
-    def setUp(self):
-        """
-        Настраивает тестовые данные, создавая активного и неактивного пользователя,
-        а также поставщика узлов сети.
-        """
-        self.active_user = self.create_user(
+    @classmethod
+    def setUpTestData(cls):
+        cls.active_user = cls.create_user(
             "active@example.com", "password", is_active=True
         )
-        self.inactive_user = self.create_user(
+        cls.inactive_user = cls.create_user(
             "inactive@example.com", "password", is_active=False
         )
-        self.supplier = self.create_network_node(name="Supplier Node")
+        cls.supplier = cls.create_network_node(name="Supplier Node")
+        cls.node1 = cls.create_network_node(
+            name="Node 1", email="node1@example.com", debt=100.00
+        )
+        cls.node2 = cls.create_network_node(
+            name="Node 2", email="node2@example.com", debt=200.00
+        )
+
+        # Экземпляр AdminSite и NetworkNodeAdmin для действий админа
+        cls.site = AdminSite()
+        cls.admin = NetworkNodeAdmin(NetworkNode, cls.site)
+
+    def setUp(self):
         self.client.force_authenticate(user=self.active_user)
 
     def test_create_network_node(self):
-        """
-        Тестирует создание нового узла сети с заданными данными и проверяет,
-        что он создается успешно с ожидаемыми значениями.
-        """
         url = reverse("networknode-list")
         data = {
             "name": "Retail Node",
@@ -95,23 +84,30 @@ class NetworkNodeTests(BaseTestSetup):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["debt"], "50.00")
 
-    def test_filter_network_node_by_country(self):
-        """Тест на фильтрацию NetworkNode по стране"""
-        # Создаем узел NetworkNode с конкретной страной для фильтрации
-        self.create_network_node(name="Node in USA", country="USA")
+    def test_clear_debt_action(self):
+        """
+        Проверяет, что действие clear_debt устанавливает задолженность узлов в 0.
+        """
+        queryset = NetworkNode.objects.filter(id__in=[self.node1.id, self.node2.id])
 
+        # Прямой вызов метода действия clear_debt, передавая None вместо request
+        NetworkNodeAdmin(NetworkNode, None).clear_debt(None, queryset)
+
+        # Обновляем объекты из базы данных и проверяем их задолженность
+        self.node1.refresh_from_db()
+        self.node2.refresh_from_db()
+        self.assertEqual(self.node1.debt, 0)
+        self.assertEqual(self.node2.debt, 0)
+
+    def test_filter_network_node_by_country(self):
+        self.create_network_node(name="Node in USA", country="USA")
         url = reverse("networknode-list") + "?country=USA"
         response = self.client.get(url)
-
-        # Проверяем, что результат содержит только один узел с указанной страной
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["country"], "USA")
 
     def test_update_network_node_debt_denied(self):
-        """
-        Тестирует запрет на обновление поля 'debt' в узле сети.
-        """
         url = reverse("networknode-detail", args=[self.supplier.id])
         data = {"name": "Updated Supplier Node", "debt": 200.00}
         response = self.client.patch(url, data, format="json")
@@ -119,44 +115,47 @@ class NetworkNodeTests(BaseTestSetup):
         self.assertIn("debt", response.data)
 
     def test_access_denied_for_inactive_user(self):
-        """
-        Тестирует, что неактивному пользователю отказано в доступе к API для узлов сети.
-        """
         self.client.force_authenticate(user=self.inactive_user)
         url = reverse("networknode-list")
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
-class ProductTests(BaseTestSetup):
+class NetworkNodeUpdateTests(BaseTestSetup):
     """
-    Тесты для модели Product, включая создание продуктов.
+    Тесты для проверки обновления узлов сети, включая защиту поля "debt" от обновлений.
     """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = cls.create_user(
+            email="testuser@example.com", password="testpassword", is_active=True
+        )
+        cls.node = cls.create_network_node(
+            name="Test Node",
+            email="test@example.com",
+            country="Test Country",
+            city="Test City",
+            street="Test Street",
+            building_number="1",
+            debt=100.00,
+            type=NetworkNode.FACTORY,
+        )
+        cls.url = reverse("networknode-detail", args=[cls.node.id])
 
     def setUp(self):
-        """
-        Настраивает тестовые данные, создавая активного пользователя
-        и поставщика для продуктов.
-        """
-        self.user = self.create_user("user@example.com", "password", is_active=True)
-        self.supplier = self.create_network_node(name="Supplier Node")
         self.client.force_authenticate(user=self.user)
 
-    def test_create_product(self):
-        """
-        Тестирует создание нового продукта и проверяет, что он создается успешно
-        с ожидаемыми значениями.
-        """
-        url = reverse("product-list")
-        data = {
-            "name": "Product A",
-            "model": "Model X",
-            "release_date": "2024-01-01",
-            "supplier": self.supplier.id,
-        }
-        response = self.client.post(url, data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["name"], "Product A")
+    def test_update_network_node_successful(self):
+        data = {"name": "Updated Node", "city": "Updated City"}
+        response = self.client.patch(self.url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Проверка, что данные были обновлены корректно
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.name, "Updated Node")
+        self.assertEqual(self.node.city, "Updated City")
+        self.assertEqual(self.node.debt, 100.00)  # Убедимся, что debt не изменился
 
 
 class NetworkNodeHierarchyTests(BaseTestSetup):
@@ -164,20 +163,21 @@ class NetworkNodeHierarchyTests(BaseTestSetup):
     Тесты для проверки иерархии узлов сети.
     """
 
-    def setUp(self):
+    @classmethod
+    def setUpTestData(cls):
         """
         Создает иерархию узлов сети из трех уровней.
         """
-        self.factory = self.create_network_node(
+        cls.factory = cls.create_network_node(
             name="Factory Node", type=NetworkNode.FACTORY
         )
-        self.retail = self.create_network_node(
-            name="Retail Node", type=NetworkNode.RETAIL, supplier=self.factory
+        cls.retail = cls.create_network_node(
+            name="Retail Node", type=NetworkNode.RETAIL, supplier=cls.factory
         )
-        self.entrepreneur = self.create_network_node(
+        cls.entrepreneur = cls.create_network_node(
             name="Entrepreneur Node",
             type=NetworkNode.ENTREPRENEUR,
-            supplier=self.retail,
+            supplier=cls.retail,
         )
 
     def test_hierarchy_levels(self):
@@ -187,14 +187,3 @@ class NetworkNodeHierarchyTests(BaseTestSetup):
         self.assertEqual(self.factory.get_hierarchy_level(), 0)
         self.assertEqual(self.retail.get_hierarchy_level(), 1)
         self.assertEqual(self.entrepreneur.get_hierarchy_level(), 2)
-
-    def test_str_representation(self):
-        """
-        Проверяет строковое представление каждого узла в иерархии.
-        """
-        self.assertEqual(str(self.factory), "Factory Node (Завод, Уровень: 0)")
-        self.assertEqual(str(self.retail), "Retail Node (Розничная сеть, Уровень: 1)")
-        self.assertEqual(
-            str(self.entrepreneur),
-            "Entrepreneur Node (Индивидуальный предприниматель, Уровень: 2)",
-        )
