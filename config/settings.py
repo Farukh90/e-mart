@@ -142,8 +142,8 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 SERVER_EMAIL = EMAIL_HOST_USER
 EMAIL_ADMIN = EMAIL_HOST_USER
 
-file_logging = True
-console_logging = True
+FILE_LOGGING = env.bool("FILE_LOGGING", default=False)
+CONSOLE_LOGGING = env.bool("CONSOLE_LOGGING", default=False)
 
 LOGGING = {
     "version": 1,
@@ -159,35 +159,36 @@ LOGGING = {
         },
     },
     "handlers": {
-        "console": {
-            "level": "DEBUG",
-            "class": "logging.StreamHandler",
-            "formatter": "simple",
-        }
-        if console_logging
-        else None,
-        "file": {
-            "level": "DEBUG",
-            "class": "logging.FileHandler",
-            "filename": str(BASE_DIR / "django.log"),
-            "formatter": "verbose",
-        }
-        if file_logging
-        else None,
+        **({
+            "console": {
+                "level": "DEBUG",
+                "class": "logging.StreamHandler",
+                "formatter": "simple",
+            }
+        } if CONSOLE_LOGGING else {}),  # Включаем консольный обработчик только если активен
+
+        **({
+            "file": {
+                "level": "DEBUG",
+                "class": "logging.FileHandler",
+                "filename": str(BASE_DIR / "django.log"),
+                "formatter": "verbose",
+            }
+        } if FILE_LOGGING else {}),  # Включаем файловый обработчик только если активен
     },
     "loggers": {
         "": {
             "handlers": (
-                (["console"] if console_logging else [])
-                + (["file"] if file_logging else [])
+                (["console"] if CONSOLE_LOGGING else [])
+                + (["file"] if FILE_LOGGING else [])
             ),
             "level": "DEBUG",
             "propagate": True,
         },
         "environ": {
             "handlers": (
-                (["console"] if console_logging else [])
-                + (["file"] if file_logging else [])
+                (["console"] if CONSOLE_LOGGING else [])
+                + (["file"] if FILE_LOGGING else [])
             ),
             "level": "ERROR",
             "propagate": False,
