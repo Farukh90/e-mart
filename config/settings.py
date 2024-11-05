@@ -159,22 +159,29 @@ LOGGING = {
         },
     },
     "handlers": {
-        **({
-            "console": {
-                "level": "DEBUG",
-                "class": "logging.StreamHandler",
-                "formatter": "simple",
+        **(
+            {
+                "console": {
+                    "level": "DEBUG",
+                    "class": "logging.StreamHandler",
+                    "formatter": "simple",
+                }
             }
-        } if CONSOLE_LOGGING else {}),  # Включаем консольный обработчик только если активен
-
-        **({
-            "file": {
-                "level": "DEBUG",
-                "class": "logging.FileHandler",
-                "filename": str(BASE_DIR / "django.log"),
-                "formatter": "verbose",
+            if CONSOLE_LOGGING
+            else {}
+        ),  # Включаем консольный обработчик только если активен
+        **(
+            {
+                "file": {
+                    "level": "DEBUG",
+                    "class": "logging.FileHandler",
+                    "filename": str(BASE_DIR / "django.log"),
+                    "formatter": "verbose",
+                }
             }
-        } if FILE_LOGGING else {}),  # Включаем файловый обработчик только если активен
+            if FILE_LOGGING
+            else {}
+        ),  # Включаем файловый обработчик только если активен
     },
     "loggers": {
         "": {
